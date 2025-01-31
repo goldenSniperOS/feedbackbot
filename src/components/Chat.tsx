@@ -1,20 +1,36 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Input from "./Input";
+
 import { getQuestionBasedOnValueAndOrder } from "../utils/question";
-import { ChatQuestion, ChatResponse, Origin, Suggestion } from "@/types/message";
+import {
+  ChatQuestion,
+  ChatResponse,
+  Origin,
+  Suggestion,
+} from "@/types/message";
 import MessageComponent from "./MessageComponent";
 import SuggestionComponent from "./SuggestionComponent";
 import Image from "next/image";
 
-const Chat = ({ questions, responses, host, id }) => {
-  const lastQuestionOrderIndex = questions[questions.length - 1]?.order || 1;
+const Chat = ({
+  questions,
+  responses,
+  host,
+  id,
+}: {
+  questions: ChatQuestion[];
+  responses: ChatResponse[];
+  host: string | undefined;
+  id: string;
+}) => {
+  const lastQuestionOrderIndex = questions[questions.length - 1].order;
   const [messages, setMessages] = useState<(ChatQuestion | ChatResponse)[]>([]);
   const [questionOrderIndex, setQuestionOrderIndex] = useState(1);
   const [responseValue, setResponseValue] = useState("");
   const [inputValue, setInputValue] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [actualQuestion, setActualQuestion] = useState<ChatQuestion | null>(null);
+  const [actualQuestion, setActualQuestion] = useState<ChatQuestion>();
   const [inputDisabled, setInputDisabled] = useState(true);
 
   const inputReference = useRef<HTMLInputElement>(null);
@@ -32,19 +48,134 @@ const Chat = ({ questions, responses, host, id }) => {
       },
       ...messages,
     ];
-    return totalMessages.map((m, i) => <MessageComponent messageData={m} index={i} key={i} />);
+    return totalMessages.map((m, i) => (
+      <MessageComponent messageData={m} index={i} key={i} />
+    ));
+  };
+
+  const inputFocus = () => {
+    inputReference?.current?.focus();
+  };
+
+  const _setSuggestion = (inputValue, value) => {
+    setInputValue(inputValue);
+    if (!inputDisabled) inputFocus();
+
+    if (value) setResponseValue(value);
+  };
+
+  const renderSuggestions = () => {
+    return suggestions.map((s, i) => (
+      <SuggestionComponent
+        suggestion={s}
+        key={i}
+        index={i}
+        _setSuggestion={_setSuggestion}
+      />
+    ));
+  };
+
+  const scrollToBottom = () => {
+    endChatReference.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const showQuestion = async () => {
+    const timeout1 = setTimeout(() => {
+      addQuestion(messages, {
+        message: "...",
+        disabled: true,
+        suggestions: [],
+      });
+    }, 500);
+
+    const timeout2 = setTimeout(() => {
+      const question = getQuestionBasedOnValueAndOrder(
+        questions,
+        questionOrderIndex,
+        responseValue
+      );
+      const cleanMessages = messages.filter((m) => m.message !== "...");
+
+      addQuestion(cleanMessages, question);
+    }, 1500);
+  };
+
+  useEffect(() => {
+    showQuestion();
+    setResponseValue("");
+    setInputValue("");
+  }, [questionOrderIndex]);
+
+  const addQuestion = (messages, question) => {
+    const { suggestions } = question;
+    setSuggestions(suggestions);
+    setActualQuestion(question);
+    setMessages([...messages, question]);
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+    setTimeout(() => {
+      if (actualQuestion) {
+        const { disabled } = actualQuestion;
+        setInputDisabled(disabled);
+      }
+    }, 500);
+  }, [messages, suggestions, actualQuestion]);
+
+  useEffect(() => {
+    if (!inputDisabled) {
+      inputFocus();
+    }
+  }, [inputDisabled]);
+
+  const sendMessage = () => {
+    if (
+      questionOrderIndex !== lastQuestionOrderIndex &&
+      id &&
+      actualQuestion?._id
+    ) {
+      const response: ChatResponse = {
+        chatId: id,
+        message: inputValue,
+        questionId: actualQuestion?._id?.toString(),
+        order: actualQuestion?.order,
+        value: responseValue,
+        origin: Origin.Feedbackbot,
+        date: new Date(),
+      };
+      setMessages([...messages, response]);
+      insertResponse(response);
+      setQuestionOrderIndex(questionOrderIndex + 1);
+    }
+  };
+
+  const insertResponse = async (response: ChatResponse) => {
+    await fetch(`${host}/api/message/response`, {
+      body: JSON.stringify(response),
+      method: "POST",
+    });
+  };
+
+  const inputOnChange = (event) => {
+    if (!inputDisabled) {
+      setResponseValue(event.target.value);
+    }
+    setInputValue(event.target.value);
   };
 
   useEffect(() => {
     let initialMessages: (ChatQuestion | ChatResponse)[] = [];
     responses.forEach((r) => {
-      const question = questions.find((q) => q._id?.toString() === r.questionId);
+      const question = questions.find(
+        (q) => q._id?.toString() === r.questionId
+      );
       if (question) {
-        initialMessages.push(question, r);
+        initialMessages = [...initialMessages, question, r];
       }
     });
     setMessages(initialMessages);
-    setQuestionOrderIndex(responses.length + 1);
+    setQuestionOrderIndex(questions.length === responses.length ? responses.length : responses.length + 1);
   }, []);
 
   return (
@@ -56,7 +187,12 @@ const Chat = ({ questions, responses, host, id }) => {
         </div>
         <div className="flex justify-between mt-4">
           {suggestions.map((s, i) => (
-            <SuggestionComponent suggestion={s} key={i} index={i} _setSuggestion={setInputValue} />
+            <SuggestionComponent
+              suggestion={s}
+              key={i}
+              index={i}
+              _setSuggestion={setInputValue}
+            />
           ))}
         </div>
         {lastQuestionOrderIndex !== questionOrderIndex && (
@@ -68,12 +204,25 @@ const Chat = ({ questions, responses, host, id }) => {
               ref={inputReference}
               onChange={(event) => setInputValue(event.target.value)}
             />
-            <span
-              className="material-symbols-outlined cursor-pointer text-gray-500 hover:text-gray-700 text-2xl ml-3"
-              onClick={() => {}}
+            <button
+              onClick={sendMessage}
+              className="flex items-center justify-center bg-teal-400 text-white font-semibold px-6 py-3 rounded-full shadow-md hover:bg-teal-500 transition duration-200 focus:outline-none focus:ring-2 focus:ring-teal-300 active:scale-95"
             >
-              send
-            </span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-6 h-6 mr-2"
+              >
+                <path d="M22 2L11 13" />
+                <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+              </svg>
+              Send
+            </button>
           </div>
         )}
       </div>
